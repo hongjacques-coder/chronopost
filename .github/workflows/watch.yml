@@ -1,0 +1,49 @@
+name: Suivi Chronopost
+
+# Le cron GitHub ne descend pas sous 5 min (et part souvent en retard).
+# Pour vérifier toutes les ~30 s, chaque run boucle pendant ~5 h ; le cron ne sert
+# qu'à (re)lancer un run. Grâce à `concurrency`, un seul run tourne à la fois et
+# un seul attend derrière : il démarre dès que le précédent se termine.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: chronopost-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    # Limite GitHub : 6 h par job. On boucle 5 h pour garder de la marge
+    # et que l'étape de sauvegarde du cache s'exécute toujours.
+    timeout-minutes: 330
+    env:
+      TRACKING_NUMBER: ${{ vars.TRACKING_NUMBER || 'XW609350053TS' }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      STATE_FILE: state.json
+      INTERVAL: ${{ vars.INTERVAL || '30' }}
+      DURATION: ${{ vars.DURATION || '18000' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurer l'état précédent
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: chronopost-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: chronopost-state-
+
+      - name: Surveiller (boucle)
+        run: python3 watch.py
+
+      - name: Sauvegarder l'état
+        if: always() && hashFiles('state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: chronopost-state-${{ github.run_id }}-${{ github.run_attempt }}
